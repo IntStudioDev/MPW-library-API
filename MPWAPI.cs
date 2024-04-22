@@ -843,6 +843,22 @@ namespace MPW
 				WindowType.SetPropertyValue("Minimized", Window, value);
 			}
 		}
+		
+		/// <summary>
+		/// Called after the window change minimized status.
+		/// </summary>
+		public UnityEvent<bool> OnMinimized
+		{
+			get
+			{
+				return WindowType.GetFieldValue<UnityEvent<bool>>("OnMinimized", Window);
+			}
+			set
+			{
+				WindowType.SetFieldValue("OnMinimized", Window, value);
+			}
+		}
+		
 		public MonoBehaviour MinimizedWindowButton
 		{
 			get
