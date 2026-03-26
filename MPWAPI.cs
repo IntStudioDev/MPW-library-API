@@ -1,875 +1,491 @@
-﻿using System;
+﻿#nullable enable
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
-
-using TMPro;
+using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
+using System.Text;
 
 using UnityEngine;
-using UnityEngine.Events;
-using UnityEngine.UI;
 
-//* API version: 1.3.4
-namespace MPW
+namespace MPW;
+
+/// <summary> API for working with the MPW library. </summary>
+public class MPWAPI
 {
-	internal static class TypeExtensions
+	/// <summary> Is api initialized? </summary>
+	public virtual bool IsInitialized
 	{
-		#region Instance
-		//* Property
-		public static T GetPropertyValue<T>(this Type type, string name, object obj)
-		{
-			PropertyInfo propertyInfo = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-			return (T)propertyInfo.GetValue(obj);
-		}
-		public static void SetPropertyValue(this Type type, string name, object obj, object value)
-		{
-			PropertyInfo propertyInfo = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-			propertyInfo.SetValue(obj, value);
-		}
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		get => Status == APIStatus.Success;
+	}
+	/// <summary> Current API status. </summary>
+	public virtual APIStatus Status => _Status;
+	/// <summary> Invoked when API status changed. 
+	/// <para>
+	/// When subscribed, it immediately sends the current status, unless it is <see cref="APIStatus.None"/>. 
+	/// </para>
+	/// </summary>
+	public event ApiStatusChangedHandler? StatusChanged
+	{
+		add => StatusChanged_Subscribe(value);
+		remove => StatusChanged_Unsubscribe(value);
+	}
 
-		//* Field
-		public static T GetFieldValue<T>(this Type type, string name, object obj)
+	/// <summary> MPW services. </summary>
+	public virtual IServiceProvider Services
+	{
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		get
 		{
-			FieldInfo fieldInfo = type.GetField(name, BindingFlags.Instance | BindingFlags.Public);
-			return (T)fieldInfo.GetValue(obj);
-		}
-		public static void SetFieldValue(this Type type, string name, object obj, object value)
-		{
-			FieldInfo fieldInfo = type.GetField(name, BindingFlags.Instance | BindingFlags.Public);
-			fieldInfo.SetValue(obj, value);
-		}
-
-		//* Method
-		public static void InvokeMethod(this Type type, string name, object obj, params object[] args)
-		{
-			MethodInfo methodInfo = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public);
-			methodInfo.Invoke(obj, args);
-		}
-		public static T InvokeMethod<T>(this Type type, string name, object obj, params object[] args)
-		{
-			MethodInfo methodInfo = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public);
-			return (T)methodInfo.Invoke(obj, args);
-		}
-		#endregion
-
-		#region Static
-		//* Property
-		internal static T GetStaticPropertyValue<T>(this Type type, string name)
-		{
-			PropertyInfo propertyInfo = type.GetProperty(name, BindingFlags.Static | BindingFlags.Public);
-			return (T)propertyInfo.GetValue(null);
-		}
-		internal static void SetStaticPropertyValue(this Type type, string name, object value)
-		{
-			PropertyInfo propertyInfo = type.GetProperty(name, BindingFlags.Static | BindingFlags.Public);
-			propertyInfo.SetValue(null, value);
-		}
-
-		//* Field
-		internal static T GetStaticFieldValue<T>(this Type type, string name)
-		{
-			FieldInfo fieldInfo = type.GetField(name, BindingFlags.Static | BindingFlags.Public);
-			return (T)fieldInfo.GetValue(null);
-		}
-		internal static void SetStaticFieldValue(this Type type, string name, object value)
-		{
-			FieldInfo fieldInfo = type.GetField(name, BindingFlags.Static | BindingFlags.Public);
-			fieldInfo.SetValue(null, value);
-		}
-
-		//* Method
-		internal static void InvokeStaticMethod(this Type type, string name, params object[] args)
-		{
-			MethodInfo methodInfo = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public);
-			if (methodInfo == null)
+			switch (Status)
 			{
-				return;
+				case APIStatus.None:
+				{
+					throw new InvalidOperationException("The API has not started initialization.");
+				}
+				case APIStatus.Processing:
+				{
+					throw new InvalidOperationException("The API sends a request or waits for a response from the library.");
+				}
+				case APIStatus.MPWNotFound:
+				{
+					throw new LibraryNotFoundException("The API could not find MPW library service provider type (most likely, the library hasn't been loaded).");
+				}
+				case APIStatus.ResponseError:
+				{
+					throw new AggregateException("The MPW library's response contains an errors. Check previous logs.");
+				}
+				case APIStatus.Success:
+				{
+					return _ServiceProvider!;
+				}
+				default:
+				{
+					throw new ArgumentOutOfRangeException(nameof(Status), _Status, "Unknown API status.");
+				}
 			}
-			methodInfo.Invoke(null, args);
-		
 		}
-		internal static T InvokeStaticMethod<T>(this Type type, string name, params object[] args)
-		{
-			MethodInfo methodInfo = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public);
-			if (methodInfo == null)
-			{
-				return default(T);
-			}
+	}
 
-			return (T)methodInfo.Invoke(null, args);
-		}
-		internal static T InvokeStaticMethod<T>(this Type type, string name, Type[] types, params object[] args)
-		{
-			MethodInfo methodInfo = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public, null, types, null);
-			if (methodInfo == null)
-			{
-				return default(T);
-			}
+	/// <summary> Mod that uses the API. </summary>
+	public virtual ModMetaData Mod { get; }
 
-			return (T)methodInfo.Invoke(null, args);
+
+	/// <summary> Create api for mod. </summary>
+	/// <param name="mod"> Mod that will use the API.</param>
+	/// <exception cref="ArgumentNullException"> Thrown if <paramref name="mod"/> is <see langword="null"/>. </exception>
+	/// <exception cref="TypeLoadException"> Thrown if failed to get MPW service provider type. </exception>
+	/// <exception cref="MissingMethodException"> Thrown if failed to get request method. </exception>
+	public static MPWAPI Create(ModMetaData mod)
+	{
+		if (mod == null)
+		{
+			throw new ArgumentNullException(nameof(mod));
 		}
-		#endregion
+
+		MPWAPI api = new MPWAPI(mod);
+		api.StartInitializing();
+
+		return api;
+	}
+
+
+	/// <inheritdoc/>
+	public override string ToString() => $"\"{Mod.Name}\"`s MPWAPI";
+
+	#region NonPublic
+	/// <inheritdoc cref="Services"/>
+	protected IServiceProvider? _ServiceProvider;
+	/// <inheritdoc cref="Status"/>
+	protected APIStatus _Status;
+
+	/// <summary> Backing event for <see cref="StatusChanged"/>, </summary>
+	protected event ApiStatusChangedHandler? _StatusChanged;
+
+	/// <inheritdoc/>
+	protected MPWAPI(ModMetaData mod)
+	{
+		if (mod == null)
+		{
+			throw new ArgumentNullException(nameof(mod));
+		}
+		Mod = mod;
+	}
+
+	/// <summary> Start initializing API. </summary>
+	/// <inheritdoc cref="SendRequest(ProviderRequest)"/>
+	/// <inheritdoc cref="OnResponse_StatusChanged(ProviderResponse)"/>
+	protected virtual void StartInitializing()
+	{
+		SetStatus(APIStatus.Processing, false);
+		ProviderResponse response;
+		try
+		{
+			response = SendRequest(new ProviderRequest(Mod, DateTime.UtcNow));
+		}
+		catch (TypeLoadException) // type not found
+		{
+			RetryInitialize();
+			return;
+		}
+
+		if (response.IsCompleted)
+		{
+			OnResponse_StatusChanged(response);
+		}
+		else
+		{
+			response.StatusChanged += OnResponse_StatusChanged;
+		}
 	}
 
 	/// <summary>
-	/// API for working with the MPW library.
+	/// It is attempting to reinitialize.
 	/// </summary>
-	internal static class MPWAPI //* I hope Zooi makes a "Mod dependency system" soon.
+	/// <remarks> By default, this starts a coroutine that makes several attempts to send the request. </remarks>
+	protected virtual void RetryInitialize()
 	{
-		public static bool MPWFinded { get; private set; } = false;
-		private const int NumberOfSearchCycles = 35;
-		private static bool HasExtraTry = true;
-		public static event EventHandler OnMPWFinded;
-
-		public static Transform SelectedWindowTransform => WindowManagerBehaviourType.GetStaticPropertyValue<Transform>("SelectedWindowTransform");
-		public static MonoBehaviour[] Windows => WindowManagerBehaviourType.GetStaticPropertyValue<MonoBehaviour[]>("Windows");
-
-		public static Transform WindowsCanvas => WindowManagerBehaviourType.GetStaticFieldValue<Transform>("WindowsCanvas");
-		public static Transform ContextMenuCanvas => WindowManagerBehaviourType.GetStaticFieldValue<Transform>("ContextMenuCanvas");
-
-		public static RectTransform GridlWithMinimizedWindows => WindowManagerBehaviourType.GetStaticFieldValue<RectTransform>("GridlWithMinimizedWindows");
-
-		private static Type WindowManagerBehaviourType;
-		private static Type MPWUIBuilderType;
-		private static Type ResourcesType;
-
-		private static MethodInfo CreateWindowMethod;
-		private static MethodInfo CreateWarningWindowMethod;
-		private static MethodInfo CreateWarningWindowWithButtonsMethod;
-		private static MethodInfo CreateWarningWindowWithGroupOfButtonsMethod;
-		private static MethodInfo CreateNormalWindowMethod;
-
-		private static MethodInfo CreateAdvancedButtonMethod;
-
-		public static ModMetaData ModMeta;
-
-		#region [_]
-		/// <summary>
-		/// Should be called in the <c>OnLoad()</c> method.
-		/// </summary>
-		public static void Initialize()
+		BackgroundItemLoader.Instance!.StartCoroutine(InitializeRoutine(TimeSpan.FromSeconds(1), 5));
+	}
+	/// <summary>
+	/// Attempts to send the request <paramref name="attempts"/> times, with a <paramref name="requestSendDelay"/> between each attempt.
+	/// </summary>
+	/// <param name="requestSendDelay"> Delay between requests. </param>
+	/// <param name="attempts"> Max attempts. </param>
+	protected virtual IEnumerator InitializeRoutine(TimeSpan requestSendDelay, int attempts)
+	{
+		if (attempts <= 0)
 		{
-			ModMeta = ModAPI.Metadata;
-			StartSearchingMPW();
-			//Debug.LogError("!ModLoader.ModListChanged += delegate");
-			//BackgroundItemLoader.Instance.StartCoroutine(Utils.NextFrameCoroutine(() =>
-			//{
-   //             ModLoader.ModListChanged += (object sender, EventArgs e) =>
-   //             {
-   //                 for (int i = 0; i < 10; i++)
-   //                 {
-   //                     Debug.LogError("!ModLoader.ModListChanged!");
-   //                 }
-   //                 DialogBoxManager.Notification("!ModLoader.ModListChanged!");
-   //             };
-   //         }));
+			yield break;
 		}
 
-		private static bool TryGetMPW()
+		WaitForSecondsRealtime wait = new WaitForSecondsRealtime((float)requestSendDelay.TotalSeconds);
+
+		List<Exception> exceptions = new List<Exception>(attempts);
+		int currentAttempts = attempts;
+		while (currentAttempts > 0)
 		{
-			ModScript modScript = null;
-			foreach (KeyValuePair<ModMetaData, ModScript> pair in ModLoader.ModScripts)
+			currentAttempts--;
+			yield return wait;
+
+			ProviderResponse response;
+			try
 			{
-				if (pair.Key.Active && pair.Key.Name == "MPW library" && pair.Key.Author == "Int Team")
-				{
-					modScript = pair.Value;
-					break;
-				}
+				response = SendRequest(new ProviderRequest(Mod, DateTime.UtcNow));
 			}
-			if (modScript == null)
+			catch (Exception ex)
 			{
-				return false;
+				exceptions.Add(ex);
+				continue;
 			}
 
-			Type windowManager = modScript.LoadedAssembly.GetType("MPW.WindowManagerBehaviour");
-			if (windowManager == null)
+
+			exceptions.Clear();
+			if (response.IsCompleted)
 			{
-				return false;
+				OnResponse_StatusChanged(response);
 			}
-			WindowManagerBehaviourType = windowManager;
-			MPWFinded = true;
-			
-			GetMemders(modScript);
-			OnMPWFinded.Invoke(null, EventArgs.Empty);
-			return true;
-		}
-		private static void GetMemders(ModScript script)
-		{
-			Type stringType = typeof(string).MakeByRefType();
-			Type spriteType = typeof(Sprite).MakeByRefType();
-
-			CreateWindowMethod = WindowManagerBehaviourType.GetMethod("CreateWindow", BindingFlags.Static | BindingFlags.Public, null, new Type[2]
+			else
 			{
-				stringType,
-				spriteType,
-			}, null);
-			CreateWarningWindowMethod = WindowManagerBehaviourType.GetMethod("CreateWarningWindow", BindingFlags.Static | BindingFlags.Public, null, new Type[3]
-			{
-				stringType,
-				spriteType,
-				stringType
-
-			}, null);
-			CreateWarningWindowWithButtonsMethod = WindowManagerBehaviourType.GetMethod("CreateWarningWindowWithButtons", BindingFlags.Static | BindingFlags.Public, null, new Type[4]
-			{
-				stringType,
-				spriteType,
-				stringType,
-				typeof(UnityAction).MakeByRefType()
-
-			}, null);
-			CreateWarningWindowWithGroupOfButtonsMethod = WindowManagerBehaviourType.GetMethod("CreateWarningWindowWithGroupOfButtons", BindingFlags.Static | BindingFlags.Public, null, new Type[4]
-			{
-				stringType,
-				spriteType,
-				stringType,
-				typeof((string, Sprite, UnityAction)[]).MakeByRefType()
-
-			}, null);
-			CreateNormalWindowMethod = WindowManagerBehaviourType.GetMethod("CreateNormalWindow", BindingFlags.Static | BindingFlags.Public, null, new Type[2]
-			{
-				stringType,
-				spriteType,
-			}, null);
-			
-			MPWUIBuilderType = script.LoadedAssembly.GetType("MPW.MPWUIBuilder");
-			CreateAdvancedButtonMethod = MPWUIBuilderType.GetMethod("CreateAdvancedButton", BindingFlags.Static | BindingFlags.Public, null, new Type[4]
-			{
-				typeof(Transform).MakeByRefType(),
-				stringType,
-				spriteType,
-				typeof(UnityAction).MakeByRefType()
-			}, null);
-
-			ResourcesType = script.LoadedAssembly.GetType("MPW.Resources");
-		}
-
-		public static void StartSearchingMPW()
-		{
-			BackgroundItemLoader.Instance.StartCoroutine(SearchingMPWRoutine());
-		}
-		private static IEnumerator SearchingMPWRoutine()
-		{
-			for (int i = 0; i < NumberOfSearchCycles; i++)
-			{
-				yield return new WaitForSecondsRealtime(0.5f);
-				if (TryGetMPW())
-				{
-					Debug.LogWarning(ModMeta.Name + ": MPWAPI: MPW finded! Search cycles: " + i);
-					yield break;
-				}
+				response.StatusChanged += OnResponse_StatusChanged;
 			}
-
-			#region Check DialogBox
-			if (DialogBox.IsAnyDialogboxOpen)
-			{
-				DialogBox[] dialogBoxes = GameObject.Find("/Canvas/Dialogbox").GetComponentsInChildren<DialogBox>(false);
-				foreach (DialogBox box in dialogBoxes)
-				{
-					if (box.Title.StartsWith("MPW library not found"))
-					{
-						box.DialogButtonHolder.GetChild(1).GetComponent<Button>().onClick.AddListener(StartSearchingMPW);
-						yield break;
-					}
-				}
-			}
-			DialogBox dialog = DialogBoxManager.Dialog("MPW library not found, you may not have subscribed to it in the workshop or it is not enabled.", new DialogButton[3]
-			{
-				new DialogButton("Subscribe", true, () =>
-				{
-					OpenLink("https://steamcommunity.com/sharedfiles/filedetails/?id=2953788932");
-				}),
-				new DialogButton("Retry", true, () =>
-				{
-					StartSearchingMPW();
-				}),
-				new DialogButton("Cancel", true),
-			});
-			dialog.transform.localPosition = new Vector3(550f, -430f, 0f);
-			#endregion
+			yield break;
 		}
+		SetStatus(APIStatus.MPWNotFound);
 
-		private static void CheckMPW()
+		StringBuilder message = new StringBuilder(128 + (64 * attempts));
+		message.Append($"{this}: failed to get response from MPW (attempts: {attempts}), exceptions: ");
+
+		for (int i = 0; i < exceptions.Count; i++)
 		{
-			if (!MPWFinded)
-			{
-				if (HasExtraTry)
-				{
-					HasExtraTry = false;
-					TryGetMPW();
-					Debug.LogWarning($"Extra try spent: MPW library {(MPWFinded ? "found" : "not found")}.");
-				}
-				else
-				{
-					throw new Exception("MPW library not found.");
-				}
-			}
+			message.AppendLine();
+			message.Append(" [");
+			message.Append(i);
+			message.Append("] ");
+
+			message.Append(exceptions[i]);
 		}
-		#endregion
+		exceptions.Clear();
 
-		#region WindowManager
-		/// <summary>
-		/// Creates a window.
-		/// </summary>
-		/// <param name="name">Window name.</param>
-		/// <param name="icon">Window icon.</param>
-		/// <returns>A tuple with a <see cref="WindowShell"/> and its viewport (<see cref="RectTransform"/>).</returns>
-		public static (WindowShell, RectTransform) CreateWindow(in string name = "New window", in Sprite icon = null)
-		{
-			CheckMPW();
-
-			(MonoBehaviour behaviour, RectTransform rectT) = ((MonoBehaviour, RectTransform))CreateWindowMethod.Invoke(null, new object[2]
-			{
-				string.IsNullOrEmpty(name) ? Type.Missing : name,
-				icon ?? Type.Missing,
-			});
-
-			WindowShell window = ScriptableObject.CreateInstance<WindowShell>();
-			window.Initialize(behaviour);
-			return (window, rectT);
-		}
-
-		/// <summary>
-		/// Creates a warning window, with added <paramref name="text"/> and <see cref="VerticalLayoutGroup"/>. The window changes to fit the size of the content.
-		/// </summary>
-		/// <param name="text">Text in the window.</param>
-		/// <returns>A tuple with a <see cref="WarningWindowShell"/> and its viewport (<see cref="RectTransform"/>).</returns>
-		/// <inheritdoc cref="CreateWindow(in string, in Sprite)"/>
-		public static (WarningWindowShell, RectTransform) CreateWarningWindow(in string name = null, in string text = null)
-		{
-			return CreateWarningWindow(name, null, text);
-		}
-
-		/// <inheritdoc cref="CreateWarningWindow(in string, in string)"/>
-		public static (WarningWindowShell, RectTransform) CreateWarningWindow(in string name = null, in Sprite icon = null, in string text = null)
-		{
-			CheckMPW();
-			(MonoBehaviour behaviour, RectTransform rectT) = ((MonoBehaviour, RectTransform)) CreateWarningWindowMethod.Invoke(null, new object[3]
-			{ 
-				string.IsNullOrEmpty(name) ? Type.Missing : name,
-				icon ?? Type.Missing,
-				text ?? Type.Missing 
-			});
-
-			WarningWindowShell window = ScriptableObject.CreateInstance<WarningWindowShell>();
-			window.Initialize(behaviour);
-			return (window, rectT);
-		}
-
-		///	<summary>
-		///	Creates a warning window with <paramref name="text"/> added, 2 buttons at the bottom: Ok, Cancel and a vertical layout group. The window changes according to the size of the content.
-		///	</summary>
-		/// <inheritdoc cref="CreateWarningWindow(in string, in string)"/>
-		/// <param name="okAction">Action when the OK button is pressed.</param>
-		public static (WarningWindowShell, RectTransform) CreateWarningWindowWithButtons(in string name = "New window", in string text = null, in UnityAction okAction = null)
-		{
-			return CreateWarningWindowWithButtons(name, null, text, okAction);
-		}
-
-		/// <summary>
-		/// Creates a warning window, with added <paramref name="text"/> and <see cref="VerticalLayoutGroup"/>. In a vertical group, advanced buttons are created from <paramref name="buttons"/>. Buttons are placed in <see cref="HorizontalLayoutGroup"/>s of 5 pieces.
-		/// </summary>
-		/// <param name="buttons">Array with which advanced buttons are created, arguments are the same as those of method <see cref="CreateAdvancedButton(in Transform, in string, in Sprite, UnityAction)"/>.</param>	
-		/// <inheritdoc cref="CreateWarningWindow(in string, in string)"/>
-		public static (WarningWindowShell, RectTransform) CreateWarningWindowWithGroupOfButtons(in string name = "Warning", in Sprite icon = null, in string text = "", (string, Sprite, UnityAction)[] buttons = null)
-		{
-			CheckMPW();
-			(MonoBehaviour behaviour, RectTransform rectT) = ((MonoBehaviour, RectTransform)) CreateWarningWindowWithGroupOfButtonsMethod.Invoke(null, new object[4]
-			{
-				string.IsNullOrEmpty(name) ? Type.Missing : name,
-				icon ?? Type.Missing,
-				text ?? Type.Missing,
-				buttons ?? Type.Missing 
-			});
-
-			WarningWindowShell window = ScriptableObject.CreateInstance<WarningWindowShell>();
-			window.Initialize(behaviour);
-			return (window, rectT);
-		}
-
-		///<inheritdoc cref="CreateWarningWindowWithButtons(string, string, UnityAction)"/>
-		public static (WarningWindowShell, RectTransform) CreateWarningWindowWithButtons(in string name = "New window", in Sprite icon = null, in string text = null, in UnityAction okAction = null)
-		{
-			CheckMPW();
-			(MonoBehaviour behaviour, RectTransform rectT) = ((MonoBehaviour, RectTransform)) CreateWarningWindowWithButtonsMethod.Invoke(null, new object[4]
-			{
-				string.IsNullOrEmpty(name) ? Type.Missing : name,
-				icon ?? Type.Missing,
-				text ?? Type.Missing,
-				okAction ?? Type.Missing 
-			});
-
-			WarningWindowShell window = ScriptableObject.CreateInstance<WarningWindowShell>();
-			window.Initialize(behaviour);
-			return (window, rectT);
-		}
-
-		/// <summary>
-		/// Creates a window that can be minimized.
-		/// </summary>		
-		/// <returns>A tuple with a <see cref="NormalWindowShell"/> and its viewport (<see cref="RectTransform"/>).</returns>
-		/// <inheritdoc cref="CreateWindow(string, Sprite)"/>
-		public static (NormalWindowShell, RectTransform) CreateNormalWindow(in string name = "New window", in Sprite icon = null)
-		{
-			CheckMPW();
-
-			(MonoBehaviour behaviour, RectTransform rectT) = ((MonoBehaviour, RectTransform)) CreateNormalWindowMethod.Invoke(null, new object[2]
-			{ 
-				string.IsNullOrEmpty(name) ? Type.Missing : name,
-				icon ?? Type.Missing,
-			});
-
-			NormalWindowShell window = ScriptableObject.CreateInstance<NormalWindowShell>();
-			window.Initialize(behaviour);
-			return (window, rectT);
-		}
-		#endregion
-
-		#region Resources
-		/// <summary>
-		/// Get a sprite by <paramref name="name"/> from the MPW.
-		/// </summary>
-		/// <remarks>
-		/// <b>Sprites:</b>
-		/// CloseButton <br/>
-		/// CloseButtonHighlighted <br/>
-		/// MinimizeButton <br/>
-		/// MinimizeButtonHighlighted <br/>
-		/// BackButton <br/>
-		/// BackButtonHighlighted <br/>
-		/// BackButtonDisabled <br/>
-		/// <br/>
-		/// None <br/>
-		/// Warning <br/>
-		/// <br/>
-		/// Checkbox <br/>
-		/// CheckboxToggle <br/>
-		/// Button <br/>
-		/// Confirm <br/>
-		/// CollapseButton <br/>
-		/// CollapseListButtonHighlighted <br/>
-		/// <br/>
-		/// MPWMenuIcon <br/>
-		/// MPWSettingsIcon <br/>
-		/// SettingsIcon <br/>
-		/// InfoIcon <br/>
-		/// </remarks>
-		/// <returns>
-		/// Found <see cref="Sprite"/>, if not found, returns None sprite (red question mark).
-		/// </returns>
-		public static Sprite GetSprite(in string name)
-		{
-			CheckMPW();
-
-			Type sprites = ResourcesType.GetNestedTypes(BindingFlags.Public).First((Type type) => type.Name == "Sprites");
-			return sprites.GetStaticFieldValue<Sprite>(name) ?? sprites.GetStaticFieldValue<Sprite>("None");
-		}
-		#endregion
-
-		#region MPWUIBuilder
-		/// <summary>
-		/// Play the blip if the MPW settings allow it.
-		/// </summary>
-		public static void Blip()
-		{
-			CheckMPW();
-			MPWUIBuilderType.InvokeStaticMethod("Blip");
-		}
-
-		/// <summary>
-		/// Creates a button with an <paramref name="icon"/> and <paramref name="text"/> below it.
-		/// </summary>
-		/// <param name="parent">The parent to which the button will be added.</param>
-		/// <param name="buttonAction">Action when pressed.</param>
-		/// <returns></returns>
-		public static (RectTransform, Button) CreateAdvancedButton(in Transform parent, in string text = null, in Sprite icon = null, UnityAction buttonAction = null)
-		{
-			CheckMPW();
-			return ((RectTransform, Button)) CreateAdvancedButtonMethod.Invoke(null, new object[4] {parent, text ?? Type.Missing, icon ?? Type.Missing, buttonAction ?? Type.Missing });
-		}
-		
-		/// <summary>
-		/// Creates a <see cref="Scrollbar"/> and adds a <see cref="ScrollRect"/> to the <paramref name="parent"/>.
-		/// </summary>
-		/// <returns>Added <see cref="ScrollRect"/>.</returns>
-		public static ScrollRect CreateScrollRect(in Transform parent)
-		{
-			CheckMPW();
-			return MPWUIBuilderType.InvokeStaticMethod<ScrollRect>("CreateScrollRect", new Type[1] { typeof(Transform).MakeByRefType()}, parent);
-		}
-
-        /// <summary>
-        /// Method for creating settings.
-        /// </summary>
-        /// <remarks>
-        /// Settings can have tags, they are written via <c>|</c> after the header. Are optional.
-        /// <code>
-        /// [<see cref="SettingAttribute"/>(<see cref="SettingCategory.General"/>, "title|/category name #order(from 0)/settings goup #order|order", "optional setting description")]
-        /// </code>
-        /// </remarks>
-        /// <typeparam name="C">The class type in which the <c>Save()</c> and <c>ResetSettings()</c> methods are declared.</typeparam>
-        /// <typeparam name="S">Class with settings. All public fields, properties and methods with <see cref="SettingAttribute"/> will be used to create settings.</typeparam>
-        /// <param name="parent">The parent of the settings root.</param>
-        /// <param name="settings">The current instance of the settings class.</param>
-        /// <returns>The settings root, which is the parent object for a <see cref="VerticalLayoutGroup"/> with settings and a <see cref="HorizontalLayoutGroup"/> with Save and Reset buttons.</returns>
-        public static RectTransform CreateSettings<C, S>(in Transform parent, S settings) where C : class where S : class
-		{
-			CheckMPW();
-
-			MethodInfo method = MPWUIBuilderType.GetMethod("CreateSettings", BindingFlags.Static | BindingFlags.Public).MakeGenericMethod(typeof(C), typeof(S));
-			return (RectTransform) method.Invoke(null, new object[2] { parent, settings });
-		}
-
-		/// <summary>
-		/// Creates a <see cref="VerticalLayoutGroup"/> with categories that have a colored bar on the left.
-		/// </summary>
-		/// <param name="parent"></param>
-		/// <param name="changelog">Array with categories and arrays of changes in them <c>(<see langword="string"/> category name, <see cref="Color"/> bar color, <see langword="string"/>[] changes array)</c>.</param>
-		/// <returns></returns>
-		public static RectTransform CreateChangelog(in Transform parent, in (string, Color, string[])[] changelog)
-		{
-			CheckMPW();
-
-			return MPWUIBuilderType.InvokeStaticMethod<RectTransform>("CreateChangelog", new Type[2]
-			{
-				typeof(Transform).MakeByRefType(),
-				typeof((string, Color, string[])[]).MakeByRefType()
-
-			}, parent, changelog);
-		}
-		/// <summary>
-		/// Creates a <see cref="VerticalLayoutGroup"/> with categories that have a thin white bar on the left.
-		/// </summary>
-		/// <param name="parent"></param>
-		/// <param name="changelog">Array with categories and arrays of changes in them <c>(<see langword="string"/> category name, <see langword="string"/>[] changes array)</c>.</param>
-		/// <returns></returns>
-		public static RectTransform CreateChangelogWhiteLines(in Transform parent, in (string, string[])[] changelog)
-		{
-			CheckMPW();
-
-			return MPWUIBuilderType.InvokeStaticMethod<RectTransform>("CreateChangelogWhiteLines", new Type[2]
-			{
-				typeof(Transform).MakeByRefType(),
-				typeof((string, string[])[]).MakeByRefType()
-
-			}, parent, changelog);
-		}
-
-		/// <summary>
-		/// Creates a <see cref="VerticalLayoutGroup"/> with categories containing advanced buttons . When you click on the button, the text appears.
-		/// </summary>
-		/// <param name="parent">The parent of the <see cref="VerticalLayoutGroup"/> and text object. It must be a viewport.</param>
-		/// <param name="categorysTuple">An array with categories <c>(<see langword="string"/> category name, buttons array)</c>, inside which there are arrays with buttons <c>(<see langword="string"/> name, <see cref="Sprite"/> icon, <see langword="bool"/> active, <see langword="string"/> text)</c>.</param>
-		/// <param name="onButtonPressed">Action on button click. The argument is the button that was clicked.</param>
-		/// <returns><see cref="RectTransform"/> of <see cref="VerticalLayoutGroup"/> and <see cref="RectTransform"/> of object with text.</returns>
-		public static (RectTransform, RectTransform) CreateInfo(in Transform parent, in (string, (string, Sprite, bool, string)[])[] categorysTuple, Action<(string, Sprite, bool, string)> onButtonPressed)
-		{
-			CheckMPW();
-
-			return MPWUIBuilderType.InvokeStaticMethod<(RectTransform, RectTransform)>("CreateInfo", new Type[3]
-			{
-				typeof(Transform).MakeByRefType(),
-				typeof((string, (string, Sprite, bool, string)[])[]).MakeByRefType(),
-				typeof(Action<(string, Sprite, bool, string)>)
-
-			}, parent, categorysTuple, onButtonPressed);
-		}
-        /// <summary>
-        /// Creates info and immediately opens the text of the button specified in the <paramref name="buttonPath"/>, if the button is not found, then it does not open.
-        /// </summary>
-        /// <param name="buttonPath">Tuple (<see langword="string"/> category name, <see langword="string"/> button name)</param>
-        /// <inheritdoc cref="CreateInfo(in Transform, in ValueTuple{string, ValueTuple{string, Sprite, bool, string}[]}[], Action{ValueTuple{string, Sprite, bool, string}})"/>
-        /// <returns></returns>
-        public static (RectTransform, RectTransform) CreateInfoAndOpenButton(in Transform parent, in (string, string) buttonPath, in (string, (string, Sprite, bool, string)[])[] categorysTuple, Action<(string, Sprite, bool, string)> onButtonPressed)
-		{
-            CheckMPW();
-
-            return MPWUIBuilderType.InvokeStaticMethod<(RectTransform, RectTransform)>("CreateInfoAndOpenButton", new Type[4]
-            {
-                typeof(Transform).MakeByRefType(),
-				typeof((string, string)).MakeByRefType(),
-                typeof((string, (string, Sprite, bool, string)[])[]).MakeByRefType(),
-                typeof(Action<(string, Sprite, bool, string)>)
-
-            }, parent, buttonPath, categorysTuple, onButtonPressed);
-        }
-        #endregion
-
-        #region Other
-        public static void OpenLink(string url)
-		{
-			typeof(Utils).GetMethod("OpenURL", BindingFlags.Public | BindingFlags.Static).Invoke(null, new object[1] { url });
-		}
-		/// <summary>
-		/// Creates and adds a button to the <see cref="HorizontalLayoutGroup"/> with window buttons (it also contains a close button).
-		/// </summary>
-		/// <param name="window">The window to which the button will be added to the group.</param>
-		/// <param name="sprite">Default button sprite.</param>
-		/// <param name="highlightedSprite">Button hover sprite.</param>
-		/// <param name="disabledSprite">Disabled button sprite.</param>
-		/// <param name="buttonAction">Action on button click.</param>
-		/// <returns></returns>
-		public static Button AddTopRightButton(in WindowShell window, in Sprite sprite, in Sprite highlightedSprite, in Sprite disabledSprite = null, in UnityAction buttonAction = null)
-		{
-			CheckMPW();
-
-			Type spriteType = typeof(Sprite).MakeByRefType();
-			return WindowManagerBehaviourType.InvokeStaticMethod<Button>("AddTopRightButton", new Type[5]
-			{
-				typeof(MonoBehaviour).MakeByRefType(),
-				spriteType,
-				spriteType,
-				spriteType,
-				typeof(UnityAction).MakeByRefType()
-
-			}, window.Window, sprite, highlightedSprite, disabledSprite ?? Type.Missing, buttonAction ?? Type.Missing);
-		}
-
-		/// <summary>
-		/// Add a <paramref name="buttonTransform"/> to the MPW button grid (it is located above the tools).
-		/// </summary>
-		/// <param name="buttonTransform"></param>
-		public static void AddButtonToMenuContainer(in Transform buttonTransform)
-		{
-			CheckMPW();
-			buttonTransform.SetParent(GameObject.Find("Canvas/Toolbar/MPW menu/Child container").transform);
-		}
-		#endregion
+		Debug.LogError(message.ToString());
+		// show "Not found" window ?
 	}
 
-	#region Shells
-	public class WindowShell : ScriptableObject
+	/// <summary> Send service provider request. </summary>
+	/// <returns> MPW provider response. </returns>
+	/// <exception cref="ArgumentNullException"> Thrown if <paramref name="request"/> is null. </exception>
+	/// <exception cref="TypeLoadException"> Thrown if failed to get MPW service provider type. </exception>
+	/// <exception cref="MissingMethodException"> Thrown if failed to get request method. </exception>
+	/// <exception cref="InvalidResponseTypeException"> Thrown if MPW response has invalid type. </exception>
+	protected virtual ProviderResponse SendRequest(ProviderRequest request)
 	{
-		public MonoBehaviour Window;
-		public Type WindowType;
-
-		public string Name
+		if (request == null)
 		{
-			get
-			{
-				return WindowType.GetPropertyValue<string>("Name", Window);
-			}
-			set
-			{
-				WindowType.SetPropertyValue("Name", Window, value);
-			}
-		}
-		public TextMeshProUGUI TitleTMP
-		{
-			get
-			{
-				return WindowType.GetFieldValue<TextMeshProUGUI>("TitleTMP", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("TitleTMP", Window, value);
-			}
+			throw new ArgumentNullException(nameof(request));
 		}
 
-		public Sprite Icon
+		Type providerType = Type.GetType("MPW.ServiceProvider, MPW Library, Version=null, Culture=neutral, PublicKeyToken=null", true); // assembly name
+		Debug.Log("provider type:" + providerType.AssemblyQualifiedName);
+
+		const string requestMethodName = "RequestProvider";
+		MethodInfo? requestMethod = providerType.GetMethod(requestMethodName, BindingFlags.Public | BindingFlags.Static, null, [typeof(ProviderRequest)], null);
+		if (requestMethod == null)
 		{
-			get
-			{
-				return WindowType.GetPropertyValue<Sprite>("Icon", Window);
-			}
-			set
-			{
-				WindowType.SetPropertyValue("Icon", Window, value);
-			}
-		}
-		public Image IconImage
-		{
-			get
-			{
-				return WindowType.GetFieldValue<Image>("IconImage", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("IconImage", Window, value);
-			}
+			Debug.Log("Failed to get request method.");
+			throw new MissingMethodException($"Failed to get {providerType.FullName}.{requestMethodName} method. " +
+				$"The problem is most likely caused by multiple MPW.API assemblies being loaded. Remove the MPW.API.dll load from your mod.");
 		}
 
-		/// <summary>
-		/// <see cref="RectTransform"/> an object with a <see cref="HorizontalLayoutGroup"/> with buttons, which is located in the upper right corner of the window.
-		/// </summary>
-		public RectTransform TopRightButtonsGroupRectTransform
+		object? result = requestMethod.Invoke(null, [request]);
+		Debug.Log($"request result: {result} ({result?.GetType()})");
+		if (result is ProviderResponse response)
 		{
-			get
-			{
-				return WindowType.GetFieldValue<RectTransform>("TopRightButtonsGroupRectTransform", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("TopRightButtonsGroupRectTransform", Window, value);
-			}
+			return response;
 		}
-
-		/// <summary>
-		/// <see cref="RectTransform"/> an object with a <see cref="RectMask2D"/>.
-		/// </summary>
-		public RectTransform Viewport
-		{
-			get
-			{
-				return WindowType.GetFieldValue<RectTransform>("Viewport", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("Viewport", Window, value);
-			}
-		}
-
-		/// <summary>
-		/// Called before the window closes.
-		/// </summary>
-		public UnityEvent OnClose
-		{
-			get
-			{
-				return WindowType.GetFieldValue<UnityEvent>("OnClose", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("OnClose", Window, value);
-			}
-		}
-
-		/// <summary>
-		/// Window protection from closing.
-		/// </summary>
-		/// <remarks>
-		/// Is an <see langword="enum"/> with a [<see cref="FlagsAttribute"/>].
-		/// <br/>
-		/// <b>Existing protection:</b> <br/>
-		/// None = 0 <br/>
-		///	AfterMapChange = 1 <br/>
-		///	Always = 2 <br/>
-		/// </remarks>
-		public sbyte CurrentCloseProtection
-		{
-			get
-			{
-				return WindowType.GetFieldValue<sbyte>("CurrentCloseProtection", Window);
-			}
-			set
-			{
-				WindowType.SetFieldValue("CurrentCloseProtection", Window, value);
-			}
-		}
-
-		public void Initialize(MonoBehaviour window)
-		{
-			Window = window;
-			WindowType = window.GetType();
-			OnClose.AddListener(() =>
-			{
-				Destroy(this);
-			});
-		}
-
-		public void SetSize(Vector2 size)
-		{
-			WindowType.InvokeMethod("SetSize", Window, size);
-		}
-		public virtual void Close()
-		{
-			WindowType.InvokeMethod("Close", Window);
-		}
-
-		public bool Equals(WindowShell other)
-		{
-			Debug.Log("WindowShell Equals");
-			if (other is null)
-			{
-				return false;
-			}
-			return Window == other.Window;
-		}
-		public override bool Equals(object obj)
-		{
-			Debug.Log("WindowShell Equals object");
-			return Equals(obj as WindowShell);
-		}
-
-		public override string ToString()
-		{
-			return Name;
-		}
-		public override int GetHashCode()
-		{
-			return Window.GetHashCode();
-		}
+		throw new InvalidResponseTypeException(result == null ? null : result.GetType(), typeof(ProviderResponse));
 	}
-	public class WarningWindowShell : WindowShell
+
+	/// <summary> Invoked when response. </summary>
+	/// <exception cref="ArgumentNullException"></exception>
+	protected virtual void OnResponse_StatusChanged(ProviderResponse response)
 	{
-		/// <summary>
-		/// The text that shows the warning window.
-		/// </summary>
-		public string Text
+		if (response == null)
 		{
-			get
-			{
-				return WindowType.GetPropertyValue<string>("Text", Window);
-			}
-			set
-			{
-				WindowType.SetPropertyValue("Text", Window, value);
-			}
+			throw new ArgumentNullException(nameof(response));
 		}
-		public TextMeshProUGUI TextTMP
+		switch (response.Status)
 		{
-			get
+			case ResponseStatus.Error:
 			{
-				return WindowType.GetFieldValue<TextMeshProUGUI>("TextTMP", Window);
+				Debug.LogError($"{this}: Failed to get service provider. Errors: {string.Join(",\n", response.Errors)}");
+				response.StatusChanged -= OnResponse_StatusChanged;
+				SetStatus(APIStatus.ResponseError);
+				break;
 			}
-			set
+			case ResponseStatus.Success:
 			{
-				WindowType.SetFieldValue("TextTMP", Window, value);
+				_ServiceProvider = response.ServiceProvider;
+				response.StatusChanged -= OnResponse_StatusChanged;
+				Debug.Log($"{this}: MPW service provider has been successfully obtained.");
+
+				SetStatus(APIStatus.Success);
+				break;
+			}
+			case ResponseStatus.None:
+			case ResponseStatus.Processing:
+			default:
+			{
+				break;
 			}
 		}
 	}
-	public class NormalWindowShell : WindowShell
+
+	/// <summary> Invoke <see cref="StatusChanged"/> event. </summary>
+	protected virtual void SetStatus(APIStatus status, bool notify = true)
 	{
-		/// <value><see langword="true"/> if the window is minimized, <see langword="false"/> otherwise.</value>
-		public bool Minimized
+		_Status = status;
+		if (!notify || _StatusChanged == null)
 		{
-			get
+			return;
+		}
+
+		try
+		{
+			_StatusChanged.Invoke(this, status);
+		}
+		catch (Exception ex)
+		{
+			Debug.LogError($"{this}: Failed to invoke {nameof(StatusChanged)} event: {ex}");
+		}
+		if (status == APIStatus.Success)
+		{
+			_StatusChanged = null;
+		}
+	}
+
+	/// <summary> Subscribe to <see cref="StatusChanged"/> event. </summary>
+	protected virtual void StatusChanged_Subscribe(ApiStatusChangedHandler? handler)
+	{
+		if (handler == null)
+		{
+			return;
+		}
+		if (_Status != APIStatus.None)
+		{
+			try
 			{
-				return WindowType.GetPropertyValue<bool>("Minimized", Window);
+				handler.Invoke(this, _Status);
 			}
-			set
+			catch (Exception ex)
 			{
-				WindowType.SetPropertyValue("Minimized", Window, value);
+				Debug.LogError($"{this}: Failed to invoke {nameof(StatusChanged)} event handler ({handler}) on subscribe: {ex}");
+				return;
 			}
 		}
-		
-		/// <summary>
-		/// Called after the window change minimized status.
-		/// </summary>
-		public UnityEvent<bool> OnMinimized
+
+		if (_Status != APIStatus.Success)
 		{
-			get
+			_StatusChanged += handler;
+		}
+	}
+	/// <summary> Unsubscribe from <see cref="StatusChanged"/> event. </summary>
+	protected virtual void StatusChanged_Unsubscribe(ApiStatusChangedHandler? handler) => _StatusChanged -= handler;
+	#endregion
+
+	#region Types
+	/// <summary> MPW API status. </summary>
+	public enum APIStatus
+	{
+		/// <summary> The API has not started initialization. </summary>
+		None,
+		/// <summary> The API sends a request or waits for a response from the library. </summary>
+		Processing,
+		/// <summary> The API could not find MPW library service provider type (most likely, the library hasn't been loaded). </summary>
+		MPWNotFound,
+		/// <summary> The MPW library's response contains an error. </summary>
+		ResponseError,
+		/// <summary> The service provider was successfully received. </summary>
+		Success,
+	}
+
+	/// <summary> MPW service provider request. </summary>
+	public class ProviderRequest : IEquatable<ProviderRequest>
+	{
+		/// <summary> Mod that requests a service provider. </summary>
+		public readonly ModMetaData Mod;
+		/// <summary> The time the request was sent (UTC). </summary>
+		public readonly DateTime TimeStamp;
+
+
+		/// <inheritdoc/>
+		public ProviderRequest(ModMetaData mod, DateTime timeStamp)
+		{
+			if (mod == null)
 			{
-				return WindowType.GetFieldValue<UnityEvent<bool>>("OnMinimized", Window);
+				throw new ArgumentNullException(nameof(mod));
 			}
+
+			Mod = mod;
+			TimeStamp = timeStamp;
+		}
+
+		/// <inheritdoc/>
+		public bool Equals(ProviderRequest other) => Mod == other.Mod && TimeStamp == other.TimeStamp;
+		/// <inheritdoc/>
+		public override bool Equals(object obj) => obj is ProviderRequest other && Equals(other);
+		/// <inheritdoc/>
+		public override int GetHashCode() => HashCode.Combine(Mod, TimeStamp);
+
+	}
+
+	/// <summary> MPW service provider response. </summary>
+	public class ProviderResponse
+	{
+		/// <summary> MPW service provider. </summary>
+		public IServiceProvider? ServiceProvider { get; set; }
+
+		/// <summary> Current response status. </summary>
+		public virtual ResponseStatus Status
+		{
+			get => _Status;
 			set
 			{
-				WindowType.SetFieldValue("OnMinimized", Window, value);
+				if (_Status != value)
+				{
+					_Status = value;
+					InvokeStatusChanged(_Status);
+				}
 			}
 		}
-		
-		public MonoBehaviour MinimizedWindowButton
+		/// <summary> Invoked when response status changed. </summary>
+		public event ResponseStatusChangedHandler? StatusChanged;
+
+		/// <inheritdoc cref="ResponseStatus.Success"/>
+		public bool IsSuccess => Status == ResponseStatus.Success;
+		/// <summary> The request has been processed (with or without an error). </summary>
+		public bool IsCompleted => Status != ResponseStatus.None && Status != ResponseStatus.Processing;
+
+		/// <summary> Errors. </summary>
+		public virtual IReadOnlyList<Exception> Errors { get; set; }
+
+		private ResponseStatus _Status = ResponseStatus.None;
+
+		/// <summary> Crete empty <see cref="ProviderResponse"/>. </summary>
+		public ProviderResponse()
 		{
-			get
+			Errors = Array.Empty<Exception>();
+		}
+		/// <summary> Create success <see cref="ProviderResponse"/> with specified <see cref="IServiceProvider"/>. </summary>
+		public ProviderResponse(IServiceProvider provider)
+		{
+			if (provider == null)
 			{
-				return WindowType.GetFieldValue<MonoBehaviour>("MinimizedWindowButton", Window);
+				throw new ArgumentNullException(nameof(provider));
 			}
-			set
+			ServiceProvider = provider;
+			Status = ResponseStatus.Success;
+			Errors = Array.Empty<Exception>();
+		}
+
+		/// <summary> Invoke <see cref="StatusChanged"/> event. </summary>
+		/// <exception cref="Exception"></exception>
+		protected virtual void InvokeStatusChanged(ResponseStatus status)
+		{
+			try
 			{
-				WindowType.SetFieldValue("MinimizedWindowButton", Window, value);
+				StatusChanged?.Invoke(this);
+			}
+			catch (Exception ex)
+			{
+				throw new Exception($"Failed to invoke {nameof(StatusChanged)} event", ex);
 			}
 		}
+	}
+	/// <summary> Response status. </summary>
+	public enum ResponseStatus : byte
+	{
+		/// <summary> The request has not started processing. </summary>
+		None,
+		/// <summary> Request is currently being processed. </summary>
+		Processing,
+		/// <summary> An error occurred during processing. </summary>
+		Error,
+		/// <summary> Request has been successfully processed. </summary>
+		Success,
+	}
+
+	/// <summary> Response status changed event handler. </summary>
+	public delegate void ResponseStatusChangedHandler(ProviderResponse response);
+
+	/// <summary> API status change event handler. </summary>
+	/// <param name="api"> API instance. </param>
+	/// <param name="status"> Current API status. </param>
+	public delegate void ApiStatusChangedHandler(MPWAPI api, APIStatus status);
+
+
+	/// <summary> Indicates that the library search was unsuccessful. </summary>
+	public class LibraryNotFoundException : Exception
+	{
+		/// <inheritdoc/>
+		public LibraryNotFoundException() { }
+		/// <inheritdoc/>
+		public LibraryNotFoundException(string message) : base(message) { }
+
+		/// <inheritdoc/>
+		public LibraryNotFoundException(string message, Exception innerException) : base(message, innerException) { }
+		/// <inheritdoc/>
+		protected LibraryNotFoundException(SerializationInfo info, StreamingContext context) : base(info, context) { }
+	}
+	/// <summary> Indicates an error related to an incorrect response type. </summary>
+	public class InvalidResponseTypeException : Exception
+	{
+		/// <inheritdoc/>
+		public InvalidResponseTypeException(Type? actualType, Type requiredType) :
+			base($"Invalid response type, actualType: {(actualType == null ? "null" : actualType)}, must be {requiredType}")
+		{ }
+		/// <inheritdoc/>
+		public InvalidResponseTypeException(string message) : base(message) { }
 	}
 	#endregion
 }
