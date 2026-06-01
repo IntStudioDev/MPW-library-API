@@ -39,6 +39,12 @@ public interface IWindowManager
 	/// <inheritdoc cref="CreateWindow(string, Sprite?)"/>
 	IDialogWindow CreateConfirmWindow(string name = "Confirm", Sprite? icon = null, string text = "", ButtonData ok = default, ButtonData cancel = default);
 
+	/// <summary> Create <typeparamref name="TValue"/> input field. </summary>
+	/// <typeparam name="TValue"> Type of input value. </typeparam>
+	/// <inheritdoc cref="CreateDialogWindow(string, Sprite?, string)"/>
+	/// <returns></returns>
+	IFieldInputWindow<TValue> CreateInputWindow<TValue>(string name = "Input", Sprite? icon = null, string text = "");
+
 	/// <summary> Create color picker window. </summary>
 	/// <inheritdoc cref="CreateWindow(string, Sprite?)"/>
 	IColorPickerWindow CreateColorPickerWindow(string name = "Color picker", Sprite? icon = null, Action<Color>? colorConfirmed = null);
