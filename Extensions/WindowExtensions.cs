@@ -1,5 +1,4 @@
-﻿#nullable enable
-using MPW.Windows;
+﻿using MPW.Windows;
 
 using Unity.AdvancedUI;
 

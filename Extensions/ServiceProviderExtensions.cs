@@ -1,7 +1,4 @@
-﻿#nullable enable
-using Microsoft.Extensions.DependencyInjection;
-
-namespace MPW;
+﻿namespace MPW;
 
 /// <summary> <see cref="IServiceProvider"/> extensions. </summary>
 public static class ServiceProviderExtensions
@@ -10,13 +7,20 @@ public static class ServiceProviderExtensions
 	/// <typeparam name="TService"> Type of service. </typeparam>
 	/// <returns> <see langword="true"/> if service found, otherwise <see langword="false"/>. </returns>
 	/// <exception cref="ArgumentNullException"></exception>
-	public static bool TryGetService<TService>(this IServiceProvider provider,  out TService service)
+	public static bool TryGetService<TService>(this IServiceProvider provider, out TService service)
 	{
 		if (provider == null)
 		{
 			throw new ArgumentNullException(nameof(provider));
 		}
-		service = provider.GetService<TService>()!;
-		return service != null;
+		object? serviceBoxed = provider.GetService(typeof(TService));
+		if (serviceBoxed == null)
+		{
+			service = default!;
+			return false;
+		}
+
+		service = (TService)serviceBoxed;
+		return true;
 	}
 }

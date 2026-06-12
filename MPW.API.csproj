@@ -23,49 +23,46 @@
   </PropertyGroup>
 
   <ItemGroup>
-	<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.8" />
 	<PackageReference Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-	<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
-	<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.8" />
 	<PackageReference Include="ObservableCollections" Version="3.3.4" />
-	<PackageReference Include="System.Buffers" Version="4.6.1" />
-	<PackageReference Include="System.Memory" Version="4.6.3" />
-	<PackageReference Include="System.Numerics.Vectors" Version="4.6.1" />
-	<PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" />
-	<PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
   </ItemGroup>
 
   <ItemGroup>
 	<Reference Include="Assembly-CSharp">
 	  <HintPath>$(GameDllsDir)\Assembly-CSharp.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="Unity.TextMeshPro">
 	  <HintPath>$(GameDllsDir)\Unity.TextMeshPro.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="UnityEngine">
 	  <HintPath>$(GameDllsDir)\UnityEngine.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="UnityEngine.CoreModule">
 	  <HintPath>$(GameDllsDir)\UnityEngine.CoreModule.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="UnityEngine.TextCoreModule">
 	  <HintPath>$(GameDllsDir)\UnityEngine.TextCoreModule.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="UnityEngine.TextRenderingModule">
 	  <HintPath>$(GameDllsDir)\UnityEngine.TextRenderingModule.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
 	<Reference Include="UnityEngine.UI">
 	  <HintPath>$(GameDllsDir)\UnityEngine.UI.dll</HintPath>
 	  <Private>False</Private>
+	  <SpecificVersion>False</SpecificVersion>
 	</Reference>
-	<Reference Include="System.Data" />
-	<Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
   <ItemGroup>
